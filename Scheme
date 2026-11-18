@@ -107,3 +107,181 @@ available medical records."
 
 Always distinguish documented facts from explanations.
 
+
+5. Implement using llama-index 
+
+pip install llama-index-core
+pip install llama-index-llms-openai
+pip install transformers torch accelerate
+pip install llama-index-readers-file
+
+import torch
+from transformers import pipeline
+
+MODEL_ID = "google/medgemma-27b-text-it"
+
+medgemma = pipeline(
+    "text-generation",
+    model=MODEL_ID,
+    torch_dtype=torch.bfloat16,
+    device_map="auto"
+)
+
+def analyze_medical_information(text: str) -> str:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a medical information analysis assistant. "
+                "Explain supplied medical information accurately. "
+                "Distinguish documented facts from interpretations. "
+                "Do not provide definitive diagnoses or prescribe treatment."
+            )
+        },
+        {
+            "role": "user",
+            "content": text
+        }
+    ]
+
+    result = medgemma(
+        text=messages,
+        max_new_tokens=500
+    )
+
+    return result[0]["generated_text"][-1]["content"]
+
+def get_patient_lab_results(
+    patient_id: str,
+    test_type: str = "all"
+) -> str:
+    """
+    Retrieve authorized laboratory results
+    for a patient.
+    """
+
+    # Replace with your database query.
+    results = database.get_lab_results(
+        patient_id=patient_id,
+        test_type=test_type
+    )
+
+    return str(results)
+
+from llama_index.core import (
+    VectorStoreIndex,
+    SimpleDirectoryReader
+)
+
+documents = SimpleDirectoryReader(
+    "./medical_guidelines"
+).load_data()
+
+index = VectorStoreIndex.from_documents(documents)
+
+query_engine = index.as_query_engine(
+    similarity_top_k=4
+)
+
+def search_medical_guidelines(question: str) -> str:
+    """
+    Search approved medical guidelines
+    and retrieve relevant information.
+    """
+
+    response = query_engine.query(question)
+
+    return str(response)
+
+from llama_index.core.tools import FunctionTool
+
+lab_tool = FunctionTool.from_defaults(
+    fn=get_patient_lab_results,
+    name="get_patient_lab_results",
+    description=(
+        "Retrieve laboratory results for an "
+        "authorized patient."
+    )
+)
+
+guidelines_tool = FunctionTool.from_defaults(
+    fn=search_medical_guidelines,
+    name="search_medical_guidelines",
+    description=(
+        "Search approved medical guidelines "
+        "for evidence-based information."
+    )
+)
+
+analysis_tool = FunctionTool.from_defaults(
+    fn=analyze_lab_report,
+    name="analyze_lab_report",
+    description=(
+        "Analyze and explain a laboratory report "
+        "using MedGemma."
+    )
+)
+
+tools = [
+    lab_tool,
+    guidelines_tool,
+    analysis_tool
+]
+
+from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.llms.openai import OpenAI
+
+llm = OpenAI(
+    model="gpt-4.1-mini"
+)
+
+SYSTEM_PROMPT = """
+You are a healthcare AI assistant.
+
+Your responsibilities:
+- Understand healthcare-related requests.
+- Retrieve authorized patient information.
+- Search approved medical guidelines.
+- Use MedGemma for medical information analysis.
+
+Rules:
+1. Never invent patient information.
+2. Use tools when information is required.
+3. Verify retrieved information.
+4. Never expose unauthorized patient records.
+5. Distinguish medical facts from interpretations.
+6. Never independently diagnose or prescribe.
+7. Escalate clinical decisions to qualified professionals.
+8. Never claim a tool succeeded without its result.
+
+When analyzing laboratory reports:
+-
+- Retrieve the relevant report using get_patient_lab_results.
+- Pass the report to MedGemma.
+- Explain the output carefully by using analyze_lab_report.
+- Identify missing context and limitations.
+"""
+
+agent = FunctionAgent(
+    tools=tools,
+    llm=llm,
+    system_prompt=SYSTEM_PROMPT
+)
+
+
+from huggingface_hub import AsyncInferenceClient
+import asyncio
+
+async def main():
+
+    response = await agent.run(
+        user_msg=(
+            "Retrieve the latest laboratory results "
+            "and explain the reported values."
+        )
+    )
+
+    print(str(response))
+
+
+asyncio.run(main())
